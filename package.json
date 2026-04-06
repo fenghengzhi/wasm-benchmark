@@ -1,0 +1,20 @@
+{
+  "name": "fib-benchmark",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "build:wasm": "wasm-pack build wasm-lib --target web --out-dir ../pkg"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3",
+    "vite": "^8.0.1",
+    "vite-plugin-wasm": "^3.4.1"
+  },
+  "dependencies": {
+    "bench-wasm": "file:./pkg"
+  }
+}

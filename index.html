@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mandelbrot Benchmark: WASM vs JS</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        background: #0f1117;
+        color: #e2e8f0;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 32px 20px;
+      }
+      h1 { font-size: 1.8rem; font-weight: 700; margin-bottom: 6px; }
+      .subtitle { color: #718096; margin-bottom: 28px; font-size: 0.9rem; }
+
+      .card {
+        background: #1a1d27;
+        border: 1px solid #2d3148;
+        border-radius: 12px;
+        padding: 24px 28px;
+        width: 100%;
+        max-width: 1020px;
+        margin-bottom: 20px;
+      }
+      .controls {
+        display: flex;
+        align-items: center;
+        gap: 24px;
+        flex-wrap: wrap;
+      }
+      .control-group {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      label { color: #a0aec0; font-size: 0.9rem; white-space: nowrap; }
+      input[type=range] { width: 160px; accent-color: #6c63ff; }
+      .val {
+        font-size: 1rem;
+        font-weight: 700;
+        color: #6c63ff;
+        min-width: 36px;
+      }
+      button {
+        padding: 10px 28px;
+        border: none;
+        border-radius: 8px;
+        font-size: 0.95rem;
+        font-weight: 600;
+        cursor: pointer;
+        background: #6c63ff;
+        color: #fff;
+        transition: opacity 0.15s;
+        margin-left: auto;
+      }
+      button:hover { opacity: 0.85; }
+      button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+      .canvases {
+        display: flex;
+        gap: 16px;
+        width: 100%;
+        max-width: 1020px;
+        flex-wrap: wrap;
+      }
+      .canvas-block {
+        flex: 1;
+        min-width: 300px;
+        background: #1a1d27;
+        border: 1px solid #2d3148;
+        border-radius: 12px;
+        padding: 16px;
+      }
+      .canvas-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+      }
+      .tag {
+        font-size: 0.75rem;
+        font-weight: 700;
+        padding: 3px 10px;
+        border-radius: 20px;
+      }
+      .tag-js   { background: #f6c90e22; color: #f6c90e; border: 1px solid #f6c90e55; }
+      .tag-wasm { background: #6c63ff22; color: #a09bff; border: 1px solid #6c63ff55; }
+      .time-display {
+        font-size: 1.3rem;
+        font-weight: 700;
+        color: #e2e8f0;
+        font-variant-numeric: tabular-nums;
+      }
+      canvas {
+        width: 100%;
+        height: auto;
+        display: block;
+        border-radius: 6px;
+        background: #000;
+      }
+
+      .summary {
+        width: 100%;
+        max-width: 1020px;
+        text-align: center;
+        padding: 12px;
+        font-size: 1rem;
+        color: #68d391;
+        font-weight: 600;
+        min-height: 32px;
+      }
+      .status { color: #718096; }
+      .running { color: #68d391; }
+    </style>
+  </head>
+  <body>
+    <h1>Mandelbrot Benchmark</h1>
+    <p class="subtitle">Rust/WASM vs JavaScript — 测试重点：浮点密集计算 (f64 乘加、分支迭代)</p>
+
+    <div class="card">
+      <div class="controls">
+        <div class="control-group">
+          <label>最大迭代次数</label>
+          <input type="range" id="iterSlider" min="64" max="8192" value="512" step="64" />
+          <span class="val" id="iterVal">512</span>
+        </div>
+        <div class="control-group">
+          <label>分辨率</label>
+          <select id="resSelect" style="background:#2d3148;color:#e2e8f0;border:1px solid #4a5568;border-radius:6px;padding:4px 8px;font-size:0.9rem;">
+            <option value="480x320">480 × 320</option>
+            <option value="640x427">640 × 427</option>
+            <option value="800x533">800 × 533</option>
+            <option value="1280x853" selected>1280 × 853</option>
+            <option value="1920x1280">1920 × 1280</option>
+            <option value="2560x1707">2560 × 1707</option>
+          </select>
+        </div>
+        <button id="btnRender" disabled>渲染</button>
+      </div>
+    </div>
+
+    <div class="canvases">
+      <div class="canvas-block">
+        <div class="canvas-header">
+          <span class="tag tag-js">JS</span>
+          <span class="time-display" id="timeJs">—</span>
+        </div>
+        <canvas id="canvasJs" width="640" height="427"></canvas>
+      </div>
+      <div class="canvas-block">
+        <div class="canvas-header">
+          <span class="tag tag-wasm">WASM</span>
+          <span class="time-display" id="timeWasm">—</span>
+        </div>
+        <canvas id="canvasWasm" width="640" height="427"></canvas>
+      </div>
+    </div>
+
+    <div class="summary" id="summary">
+      <span class="status" id="status">WASM 加载中...</span>
+    </div>
+
+    <!-- SHA-256 Benchmark -->
+    <h1 style="margin-top: 48px;">SHA-256 Benchmark</h1>
+    <p class="subtitle">Rust/WASM vs JavaScript vs Crypto API — 测试重点：int32 位运算 (位移、异或、旋转)</p>
+
+    <div class="card">
+      <div class="controls">
+        <div class="control-group">
+          <label>数据大小</label>
+          <select id="shaSize" style="background:#2d3148;color:#e2e8f0;border:1px solid #4a5568;border-radius:6px;padding:4px 8px;font-size:0.9rem;">
+            <option value="1">1 MB</option>
+            <option value="4" selected>4 MB</option>
+            <option value="8">8 MB</option>
+            <option value="16">16 MB</option>
+            <option value="32">32 MB</option>
+            <option value="64">64 MB</option>
+          </select>
+        </div>
+        <button id="btnSha" disabled>运行 SHA-256</button>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:16px;width:100%;max-width:1020px;flex-wrap:wrap;">
+      <div class="canvas-block" style="flex:1;min-width:200px;">
+        <div class="canvas-header">
+          <span class="tag tag-js">JS</span>
+          <span class="time-display" id="shaTimeJs">—</span>
+        </div>
+        <div style="color:#718096;font-size:0.8rem;font-family:monospace;word-break:break-all;min-height:24px;" id="shaHashJs"></div>
+      </div>
+      <div class="canvas-block" style="flex:1;min-width:200px;">
+        <div class="canvas-header">
+          <span class="tag tag-wasm">WASM</span>
+          <span class="time-display" id="shaTimeWasm">—</span>
+        </div>
+        <div style="color:#718096;font-size:0.8rem;font-family:monospace;word-break:break-all;min-height:24px;" id="shaHashWasm"></div>
+      </div>
+      <div class="canvas-block" style="flex:1;min-width:200px;">
+        <div class="canvas-header">
+          <span class="tag" style="background:#10b98122;color:#10b981;border:1px solid #10b98155;font-size:0.75rem;font-weight:700;padding:3px 10px;border-radius:20px;">Crypto API</span>
+          <span class="time-display" id="shaTimeCrypto">—</span>
+        </div>
+        <div style="color:#718096;font-size:0.8rem;font-family:monospace;word-break:break-all;min-height:24px;" id="shaHashCrypto"></div>
+      </div>
+    </div>
+
+    <div class="summary">
+      <span class="status" id="shaStatus">等待 WASM 加载...</span>
+    </div>
+
+    <!-- Int32 Matrix Multiply Benchmark -->
+    <h1 style="margin-top: 48px;">Int32 矩阵乘法 Benchmark</h1>
+    <p class="subtitle">JS vs WASM SIMD vs WebGPU vs WebGL — 测试重点：SIMD 向量化 + GPU 并行计算 (int32 乘加)</p>
+
+    <div class="card">
+      <div class="controls">
+        <div class="control-group">
+          <label>矩阵大小 N×N</label>
+          <select id="matSize" style="background:#2d3148;color:#e2e8f0;border:1px solid #4a5568;border-radius:6px;padding:4px 8px;font-size:0.9rem;">
+            <option value="128">128</option>
+            <option value="256" selected>256</option>
+            <option value="512">512</option>
+            <option value="1024">1024</option>
+          </select>
+        </div>
+        <button id="btnMat" disabled>运行矩阵乘法</button>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:16px;width:100%;max-width:1020px;flex-wrap:wrap;">
+      <div class="canvas-block" style="flex:1;min-width:200px;">
+        <div class="canvas-header">
+          <span class="tag tag-js">JS</span>
+          <span class="time-display" id="matTimeJs">—</span>
+        </div>
+        <div style="color:#718096;font-size:0.8rem;min-height:24px;" id="matInfoJs"></div>
+      </div>
+      <div class="canvas-block" style="flex:1;min-width:200px;">
+        <div class="canvas-header">
+          <span class="tag tag-wasm">WASM SIMD</span>
+          <span class="time-display" id="matTimeWasm">—</span>
+        </div>
+        <div style="color:#718096;font-size:0.8rem;min-height:24px;" id="matInfoWasm"></div>
+      </div>
+      <div class="canvas-block" style="flex:1;min-width:200px;">
+        <div class="canvas-header">
+          <span class="tag" style="background:#10b98122;color:#10b981;border:1px solid #10b98155;font-size:0.75rem;font-weight:700;padding:3px 10px;border-radius:20px;">WebGPU</span>
+          <span class="time-display" id="matTimeGpu">—</span>
+        </div>
+        <div style="color:#718096;font-size:0.8rem;min-height:24px;" id="matInfoGpu"></div>
+      </div>
+      <div class="canvas-block" style="flex:1;min-width:200px;">
+        <div class="canvas-header">
+          <span class="tag" style="background:#f9731622;color:#f97316;border:1px solid #f9731655;font-size:0.75rem;font-weight:700;padding:3px 10px;border-radius:20px;">WebGL</span>
+          <span class="time-display" id="matTimeGl">—</span>
+        </div>
+        <div style="color:#718096;font-size:0.8rem;min-height:24px;" id="matInfoGl"></div>
+      </div>
+    </div>
+
+    <div class="summary">
+      <span class="status" id="matStatus">等待 WASM 加载...</span>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
