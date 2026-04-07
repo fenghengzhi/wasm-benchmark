@@ -1,5 +1,8 @@
 import { matmul_i32_simd } from 'bench-wasm'
 import { fmt, $ } from './utils'
+import matmulWgsl from './shaders/matmul.wgsl'
+import matmulVert from './shaders/matmul.vert'
+import matmulFrag from './shaders/matmul.frag'
 
 // JS 版本：转置 B + Int32Array 顺序访问，最大化 V8 自动向量化可能性
 function matmulJs32(a: Int32Array, b: Int32Array, n: number): Int32Array {
@@ -30,24 +33,9 @@ async function benchWebGPU(a: Int32Array, b: Int32Array, n: number, runs: number
   if (!adapter) throw new Error('No GPU adapter')
   const device = await adapter.requestDevice()
 
-  const shader = device.createShaderModule({ code: `
-    const N: u32 = ${n}u;
-    @group(0) @binding(0) var<storage, read> a: array<i32>;
-    @group(0) @binding(1) var<storage, read> b: array<i32>;
-    @group(0) @binding(2) var<storage, read_write> c: array<i32>;
-
-    @compute @workgroup_size(16, 16)
-    fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-      let row = gid.y;
-      let col = gid.x;
-      if (row >= N || col >= N) { return; }
-      var sum: i32 = 0;
-      for (var k: u32 = 0u; k < N; k = k + 1u) {
-        sum = sum + a[row * N + k] * b[k * N + col];
-      }
-      c[row * N + col] = sum;
-    }
-  `})
+  const shader = device.createShaderModule({
+    code: matmulWgsl.replace(/__N__/g, String(n))
+  })
 
   const pipeline = device.createComputePipeline({
     layout: 'auto',
@@ -60,8 +48,8 @@ async function benchWebGPU(a: Int32Array, b: Int32Array, n: number, runs: number
   const bufC = device.createBuffer({ size, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC })
   const bufRead = device.createBuffer({ size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST })
 
-  device.queue.writeBuffer(bufA, 0, a)
-  device.queue.writeBuffer(bufB, 0, b)
+  device.queue.writeBuffer(bufA, 0, a as unknown as ArrayBuffer)
+  device.queue.writeBuffer(bufB, 0, b as unknown as ArrayBuffer)
 
   const bg = device.createBindGroup({
     layout: pipeline.getBindGroupLayout(0),
@@ -137,28 +125,8 @@ function benchWebGL(a: Int32Array, b: Int32Array, n: number, runs: number): { re
   const texB = createDataTexture(gl, bF, n, n)
 
   // Fullscreen quad
-  const vsSource = `#version 300 es
-    in vec2 pos;
-    void main() { gl_Position = vec4(pos, 0.0, 1.0); }
-  `
-  const fsSource = `#version 300 es
-    precision highp float;
-    uniform sampler2D uA;
-    uniform sampler2D uB;
-    uniform int uN;
-    out float outColor;
-    void main() {
-      int row = int(gl_FragCoord.y - 0.5);
-      int col = int(gl_FragCoord.x - 0.5);
-      float sum = 0.0;
-      for (int k = 0; k < ${n}; k++) {
-        float a = texelFetch(uA, ivec2(k, row), 0).r;
-        float b = texelFetch(uB, ivec2(col, k), 0).r;
-        sum += a * b;
-      }
-      outColor = sum;
-    }
-  `
+  const vsSource = matmulVert
+  const fsSource = matmulFrag.replace(/__N__/g, String(n))
 
   function compileShader(gl: WebGL2RenderingContext, type: number, src: string): WebGLShader {
     const s = gl.createShader(type)!

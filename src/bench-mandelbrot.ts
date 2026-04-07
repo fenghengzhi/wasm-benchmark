@@ -34,7 +34,7 @@ function drawPixels(canvas: HTMLCanvasElement, pixels: Uint8ClampedArray, w: num
   canvas.width  = w
   canvas.height = h
   const ctx = canvas.getContext('2d')!
-  ctx.putImageData(new ImageData(pixels, w, h), 0, 0)
+  ctx.putImageData(new ImageData(pixels as unknown as Uint8ClampedArray<ArrayBuffer>, w, h), 0, 0)
 }
 
 export function initMandelbrot() {
